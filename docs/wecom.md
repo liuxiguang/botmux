@@ -1,6 +1,6 @@
 # 企业微信智能机器人
 
-首次部署请按 [人工与 Agent 操作手册](wecom-deployment-runbook.md)逐步执行；[适配原理与本地部署指南](wecom-onboarding.md)介绍架构和功能边界。
+首次部署先看 [人与 Agent 的部署分工](wecom-deployment.md)，执行命令见 [详细操作手册](wecom-deployment-runbook.md)；原理见 [运行原理与企业微信适配](wecom-onboarding.md)。
 
 企业微信单聊或内部群内 @机器人可以向 botmux 提交文本任务。机器人通过官方 `@wecom/aibot-node-sdk` 长连接收发，专用 core-only 进程复用现有 CLI 执行、异步结果和恢复机制。
 

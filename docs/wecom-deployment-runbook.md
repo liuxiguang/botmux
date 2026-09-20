@@ -420,4 +420,4 @@ bun dist/cli.js wecom check-config --config "$BOTMUX_WECOM_DIR/config.json"
 待本人完成：如有，列出确切步骤及阻塞原因
 ```
 
-本手册命令与脚本需在每台机器分别验收。作者环境的验收结果和架构说明见[适配原理与本地部署指南](https://github.com/liuxiguang/botmux/blob/codex/wecom-support/docs/wecom-onboarding.md)，它们不能替代部署者自己的端到端测试。
+本手册命令与脚本需在每台机器分别验收。作者环境的验收结果和架构说明见[运行原理与企业微信适配](https://github.com/liuxiguang/botmux/blob/codex/wecom-support/docs/wecom-onboarding.md)，它们不能替代部署者自己的端到端测试。
