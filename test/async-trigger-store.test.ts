@@ -30,6 +30,7 @@ vi.mock('../src/utils/logger.js', () => ({
 import {
   recordPending,
   recordCompleted,
+  recordCompletedStrict,
   recordFailedStrict,
   recordTerminalFailureStrict,
   lookup,
@@ -45,6 +46,31 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+describe('strict signed completion', () => {
+  it('retains an existing real answer when a silent final is replayed', () => {
+    recordCompleted('strict', 'turn', 'real answer', 2000, 'owner');
+    expect(recordCompletedStrict('strict', 'turn', '', 3000, 'owner')).toMatchObject({
+      status: 'completed', content: 'real answer', completedAt: 2000,
+    });
+    expect(lookupStrict('strict', 'turn')?.result.content).toBe('real answer');
+  });
+
+  it('does not overwrite another owners pending result', () => {
+    recordPending('strict', 'turn', 1000, 'original');
+    expect(() => recordCompletedStrict('strict', 'turn', '', 3000, 'other')).toThrow('owner mismatch');
+    expect(lookupStrict('strict', 'turn')).toMatchObject({ ownerLarkAppId: 'original', result: { status: 'pending' } });
+  });
+
+  it('refuses corrupt evidence instead of replacing it with an empty completion', () => {
+    recordPending('strict', 'turn', 1000, 'owner');
+    const path = join(tempDir, 'async-triggers', 'strict.json');
+    const corrupt = JSON.stringify({ ownerLarkAppId: 'owner', results: { turn: null } });
+    writeFileSync(path, corrupt);
+    expect(() => recordCompletedStrict('strict', 'turn', '', 3000, 'owner')).toThrow('invalid previous');
+    expect(readFileSync(path, 'utf8')).toBe(corrupt);
+  });
 });
 
 describe('recordPending + lookup', () => {

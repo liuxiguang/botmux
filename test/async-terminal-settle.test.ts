@@ -20,6 +20,10 @@
  * Run:  pnpm vitest run test/async-terminal-settle.test.ts
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+let stateDir: string;
 
 vi.mock('../src/im/lark/client.js', () => ({
   updateMessage: vi.fn(async () => {}),
@@ -58,7 +62,7 @@ vi.mock('../src/bot-registry.js', () => ({
 vi.mock('../src/config.js', () => ({
   config: {
     web: { externalHost: 'localhost' },
-    session: { dataDir: '/tmp/test-sessions' },
+    session: { get dataDir() { return stateDir; } },
     daemon: { backendType: 'pty', cliId: 'codex' },
   },
 }));
@@ -96,6 +100,7 @@ import { initWorkerPool, __testOnly_setupWorkerHandlers } from '../src/core/work
 import type { DaemonSession } from '../src/core/types.js';
 import type { WorkerToDaemon } from '../src/types.js';
 import { EventEmitter } from 'node:events';
+import { lookupStrict, recordPending } from '../src/services/async-trigger-store.js';
 
 function makeDs(): DaemonSession {
   const fakeWorker = new EventEmitter() as any;
@@ -147,6 +152,7 @@ function terminalMsg(
 
 describe('async-HTTP settle-on-terminal (daemon turn_terminal handler)', () => {
   beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), 'async-silent-settle-'));
     recordCompletedMock.mockClear();
     recordTerminalFailureStrictMock.mockClear();
     recordTerminalFailureStrictMock.mockReturnValue('written_failed');
@@ -157,7 +163,89 @@ describe('async-HTTP settle-on-terminal (daemon turn_terminal handler)', () => {
       closeSession: vi.fn(),
     } as any);
   });
-  afterEach(() => { vi.clearAllMocks(); });
+  afterEach(() => { vi.clearAllMocks(); rmSync(stateDir, { recursive: true, force: true }); });
+
+  function signedSilentFixture(disposition: boolean = true) {
+    const ds = makeDs();
+    ds.session.cliId = 'codex-app';
+    ds.chatId = 'http_async_silent';
+    ds.asyncTriggerResults = new Map([['turn-signed-silent', { status: 'pending', createdAt: 1 }]]);
+    ds.session.codexAppDispatchLedger = [{
+      dispatchId: 'dispatch-silent', turnId: 'turn-signed-silent',
+      state: 'prepared', content: 'request', deliverySink: 'http_async',
+    }];
+    recordPending(ds.session.sessionId, 'turn-signed-silent', 1, ds.larkAppId);
+    __testOnly_setupWorkerHandlers(ds, ds.worker as any);
+    const message: Extract<WorkerToDaemon, { type: 'final_output' }> = {
+      type: 'final_output', sessionId: ds.session.sessionId, turnId: 'turn-signed-silent',
+      lastUuid: 'turn-signed-silent', content: '', suppressDelivery: true,
+      codexAppSettlement: {
+        requestId: 'settle-silent', generation: 'generation-silent', seq: 1, dispatchId: 'dispatch-silent',
+        ...(disposition ? { outputDisposition: 'nothing_to_send' as const } : {}),
+      },
+    };
+    return { ds, message };
+  }
+
+  it.each([false, true])('persists signed Codex silence before ACK without a later terminal (recovered=%s)', async recovered => {
+    const { ds, message } = signedSilentFixture();
+    if (recovered) ds.asyncTriggerResults = undefined;
+    let resultAtAck: unknown;
+    (ds.worker as any).send.mockImplementation((reply: any) => {
+      if (reply.type === 'codex_app_dispatch_persisted' && reply.ok) {
+        resultAtAck = lookupStrict(ds.session.sessionId, message.turnId)?.result;
+      }
+    });
+    (ds.worker as any).emit('message', message);
+    await vi.waitFor(() => expect(ds.session.codexAppDispatchLedger).toEqual([]));
+    await vi.waitFor(() => expect(resultAtAck).toBeDefined());
+    expect(resultAtAck).toMatchObject({ status: 'completed', content: '' });
+    expect(ds.asyncTriggerResults!.get(message.turnId)).toMatchObject({ status: 'completed', content: '' });
+    // Model a daemon restart: the public result survives loss of its memory map.
+    ds.asyncTriggerResults = undefined;
+    expect(lookupStrict(ds.session.sessionId, message.turnId)?.result).toMatchObject({ status: 'completed', content: '' });
+  });
+
+  it('includes silence evidence in the daemon-synthesized durable terminal before ACK', async () => {
+    const terminal = vi.fn(async () => {});
+    initWorkerPool({
+      sessionReply: vi.fn(async () => 'om_reply'), getSessionWorkingDir: () => '/tmp',
+      getActiveCount: () => 1, closeSession: vi.fn(), onTurnTerminal: terminal,
+    } as any);
+    const { ds, message } = signedSilentFixture();
+    message.dispatchAttempt = 2;
+    ds.session.codexAppDispatchLedger![0].dispatchAttempt = 2;
+    (ds.worker as any).emit('message', message);
+    await vi.waitFor(() => expect((ds.worker as any).send).toHaveBeenCalledWith(expect.objectContaining({ ok: true })));
+    expect(terminal).toHaveBeenCalledWith(ds, expect.objectContaining({
+      type: 'turn_terminal', status: 'completed', turnId: message.turnId,
+      dispatchAttempt: 2, outputDisposition: 'nothing_to_send',
+    }), expect.anything());
+  });
+
+  it('leaves generic suppressed/empty Codex finals pending without positive silence evidence', async () => {
+    const { ds, message } = signedSilentFixture(false);
+    (ds.worker as any).emit('message', message);
+    await vi.waitFor(() => expect(ds.session.codexAppDispatchLedger).toEqual([]));
+    expect(lookupStrict(ds.session.sessionId, message.turnId)?.result.status).toBe('pending');
+  });
+
+  it('retains the signed dispatch and negative ACKs when silence cannot be durably stored', async () => {
+    const { ds, message } = signedSilentFixture();
+    const path = join(stateDir, 'async-triggers', `${ds.session.sessionId}.json`);
+    rmSync(path); mkdirSync(path);
+    (ds.worker as any).emit('message', message);
+    await vi.waitFor(() => expect((ds.worker as any).send).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'codex_app_dispatch_persisted', requestId: 'settle-silent', ok: false,
+    })));
+    expect(ds.session.codexAppDispatchLedger).toHaveLength(1);
+    expect(ds.asyncTriggerResults!.get(message.turnId)?.status).toBe('pending');
+    // The exact signed final is replayable once storage is repaired.
+    rmSync(path, { recursive: true });
+    (ds.worker as any).emit('message', message);
+    await vi.waitFor(() => expect(ds.session.codexAppDispatchLedger).toEqual([]));
+    expect(lookupStrict(ds.session.sessionId, message.turnId)?.result.status).toBe('completed');
+  });
 
   it('settles a pending async result to completed+empty on a nothing_to_send terminal', async () => {
     const ds = makeDs();

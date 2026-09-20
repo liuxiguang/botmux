@@ -182,6 +182,36 @@ function readRequests(path: string): Array<Record<string, any>> {
 }
 
 describe('Codex App worker queued-turn attribution', () => {
+  it('carries positive silence evidence in the signed final and subsequent terminal', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'botmux-worker-silent-'));
+    tempDirs.add(root);
+    const fakeCodex = join(root, 'fake-codex');
+    const requestLog = join(root, 'requests.jsonl');
+    copyFileSync(resolve('test/fixtures/fake-codex-app-server.mjs'), fakeCodex);
+    chmodSync(fakeCodex, 0o755);
+    const sessionId = replacementSessionId('silent');
+    tmuxSessions.add(`bmx-${sessionId.slice(0, 8)}`);
+    const logs: string[] = [], messages: WorkerToDaemon[] = [];
+    const worker = spawnWorker(root, sessionId, fakeCodex, requestLog, 'success', logs, messages,
+      (message, child) => {
+        const requestId = message.type === 'codex_app_dispatch_transition' ? message.requestId
+          : message.type === 'final_output' ? message.codexAppSettlement?.requestId : undefined;
+        if (requestId && child.connected) child.send({ type: 'codex_app_dispatch_persisted', requestId, ok: true } satisfies DaemonToWorker);
+      });
+    worker.send(replacementInit(sessionId, fakeCodex, 'nothing to answer', {
+      env: { FAKE_CODEX_LOG: requestLog, FAKE_CODEX_BEHAVIOR: 'success', FAKE_CODEX_FINAL_TEXT: 'BOTMUX_NOTHING_TO_SEND' },
+      turnId: 'turn-silent', codexAppDispatchId: 'dispatch-silent',
+      promptCodexAppInput: { text: 'nothing to answer', clientUserMessageId: 'turn-silent' },
+    }));
+    await waitFor(worker, logs, () => messages.some(m => m.type === 'turn_terminal' && m.turnId === 'turn-silent'));
+    expect(messages.find(m => m.type === 'final_output' && m.turnId === 'turn-silent')).toMatchObject({
+      content: '', suppressDelivery: true, codexAppSettlement: { outputDisposition: 'nothing_to_send' },
+    });
+    expect(messages.find(m => m.type === 'turn_terminal' && m.turnId === 'turn-silent')).toMatchObject({
+      status: 'completed', outputDisposition: 'nothing_to_send',
+    });
+  }, 30_000);
+
   it('routes and ACKs turn N before N+1 after both inputs were written in one flush', async () => {
     const root = mkdtempSync(join(tmpdir(), 'botmux-worker-codex-routing-'));
     tempDirs.add(root);

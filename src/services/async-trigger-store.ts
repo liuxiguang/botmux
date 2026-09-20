@@ -244,6 +244,40 @@ export function recordCompleted(
   });
 }
 
+/** Crash-durable completion for a signed final transaction. Existing completed
+ * output wins over a replayed empty result; unreadable/foreign evidence fails
+ * closed so the caller must not ACK or retire the dispatch. */
+export function recordCompletedStrict(
+  sessionId: string,
+  triggerId: string,
+  content: string,
+  completedAt: number,
+  ownerLarkAppId: string,
+): PersistedAsyncTriggerResult {
+  if (!ownerLarkAppId) throw new Error('recordCompletedStrict requires ownerLarkAppId');
+  ensureDir();
+  return withFileLockSync(getFilePath(sessionId), () => {
+    const file = loadStrict(sessionId);
+    if (file.ownerLarkAppId && file.ownerLarkAppId !== ownerLarkAppId) {
+      throw new Error('recordCompletedStrict owner mismatch');
+    }
+    const prev = file.results[triggerId];
+    if (prev !== undefined && !isValidPersistedResult(prev)) {
+      throw new Error('recordCompletedStrict invalid previous result');
+    }
+    const result: PersistedAsyncTriggerResult = prev?.status === 'completed' ? prev : {
+      status: 'completed', createdAt: prev?.createdAt ?? completedAt, completedAt, content,
+    };
+    file.ownerLarkAppId = ownerLarkAppId;
+    file.results[triggerId] = result;
+    if (!file.latestTriggerId) file.latestTriggerId = triggerId;
+    // Rewrite even an existing completion: it may have come from the old
+    // best-effort writer and needs fsync before this transaction is ACKed.
+    saveStrict(sessionId, file);
+    return result;
+  });
+}
+
 /** Park a PENDING steer-group member behind its immediate FIFO successor.
  *  Restart insurance for HTTP `options.steer` (codex-app native turn/steer):
  *  the live daemon fans the group's merged real final out in-memory; if it dies

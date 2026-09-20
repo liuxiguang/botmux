@@ -10252,6 +10252,9 @@ async function handleTrustedCodexAppMarker(
     // steer_superseded validator asserts finalContent==='' and the fallback gate
     // must see the unstripped payload). If nothing remains, this was metadata or
     // a pure-silence final → persist the FIFO advance without delivering.
+    const outputDisposition = !isSuperseded && isBridgeNothingToSendFinal(finalContent)
+      ? 'nothing_to_send' as const
+      : undefined;
     const deliverableContent = bridgePostText(finalContent, false);
     if (deliverableContent.trim().length === 0 && finalContent.trim().length > 0) {
       suppressDelivery = true;
@@ -10315,6 +10318,7 @@ async function handleTrustedCodexAppMarker(
           generation: control.generation,
           seq: control.seq,
           dispatchId: codexAppDispatchId!,
+          ...(outputDisposition ? { outputDisposition } : {}),
           ...(settlementTiming ? { completedAtMs: settlementTiming.completedAtMs } : {}),
           ...(settlementTiming?.durationMs !== undefined ? { durationMs: settlementTiming.durationMs } : {}),
         },
@@ -10398,7 +10402,7 @@ async function handleTrustedCodexAppMarker(
     // The app-server runner timestamps its own completion; prefer that instant
     // over "whenever this worker got around to handling the marker". The clock
     // clamps it to now, so a skewed runner cannot mint a future completion.
-    emitTurnTerminal(turnId, 'completed', undefined, dispatchAttempt, undefined, undefined, completedAtMs);
+    emitTurnTerminal(turnId, 'completed', undefined, dispatchAttempt, outputDisposition, undefined, completedAtMs);
     return true;
   }
   rejectCodexAppControlMarker(`unsupported signed ${kind}`);

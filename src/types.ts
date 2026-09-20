@@ -1800,6 +1800,9 @@ export type WorkerToDaemon =
         generation: string;
         seq: number;
         dispatchId: string;
+        /** Positive evidence of a bare silence sentinel, preserved before the
+         * daemon ACK so worker exit cannot lose an async empty completion. */
+        outputDisposition?: 'nothing_to_send';
         /** Real completion instant / native execution span for the terminal the
          *  daemon synthesizes from this settlement. The daemon persists that
          *  terminal BEFORE the worker's own ordered `turn_terminal` arrives, and

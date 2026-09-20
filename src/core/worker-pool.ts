@@ -15057,6 +15057,34 @@ function setupWorkerHandlers(
           let inFlight = codexAppFinalSettlementInFlight.get(key);
           if (!inFlight) {
             inFlight = (async () => {
+              // Silence is a positive worker observation, not a synonym for
+              // suppressed/empty output (which also covers sends and steering).
+              // Persist it before retiring the signed dispatch: the worker can
+              // die after our ACK and before its ordered terminal IPC arrives.
+              const silentAsync = settlement.outputDisposition === 'nothing_to_send'
+                && msg.disposition !== 'steer_superseded'
+                && msg.suppressDelivery === true && msg.content === ''
+                && !ds.session.vcMeetingReceiver
+                && preview.settledEntry.deliverySink === 'http_async';
+              if (silentAsync) {
+                try {
+                  const current = ds.asyncTriggerResults?.get(msg.turnId);
+                  const completed = asyncTriggerStore.recordCompletedStrict(
+                    ds.session.sessionId, msg.turnId,
+                    current?.status === 'completed' ? current.content ?? '' : '',
+                    settlement.completedAtMs ?? Date.now(), ds.larkAppId,
+                  );
+                  (ds.asyncTriggerResults ??= new Map()).set(msg.turnId, {
+                    status: 'completed', createdAt: completed.createdAt,
+                    completedAt: completed.completedAt, content: completed.content,
+                    ...(completed.usage ? { usage: completed.usage } : {}),
+                  });
+                  ds.idempotentAsyncTurns?.delete(msg.turnId);
+                } catch (err) {
+                  logger.error(`[${t}] Failed to persist Codex App silent completion: ${err instanceof Error ? err.message : String(err)}`);
+                  return false;
+                }
+              }
               const unavailableSinkFailClosed = codexAppDeliveryMustFailClosed(
                 ds,
                 preview.settledEntry,
@@ -15118,6 +15146,10 @@ function setupWorkerHandlers(
                     turnId: msg.turnId,
                     dispatchAttempt: msg.dispatchAttempt,
                     status: 'completed',
+                    ...(settlement.outputDisposition === 'nothing_to_send'
+                      && msg.disposition !== 'steer_superseded'
+                      && msg.suppressDelivery === true && msg.content === ''
+                      ? { outputDisposition: 'nothing_to_send' as const } : {}),
                     // The worker measured this turn; carry its numbers onto the
                     // synthesized terminal. This row is written FIRST and the
                     // store's INSERT OR IGNORE keeps it, so omitting the timing
