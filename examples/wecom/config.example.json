@@ -1,0 +1,13 @@
+{
+  "botName": "编程助手",
+  "workingDir": "./project",
+  "stateDir": "./state",
+  "envFile": "./wecom.env",
+  "corePort": 19321,
+  "cliId": "codex-app",
+  "allowedUsers": ["REPLACE_WITH_AUTHENTICATED_USER_ID"],
+  "adminUsers": ["REPLACE_WITH_AUTHENTICATED_USER_ID"],
+  "allowedChats": [],
+  "maxConcurrent": 2,
+  "maxQueuedPerChat": 20
+}

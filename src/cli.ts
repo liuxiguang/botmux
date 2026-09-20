@@ -14591,6 +14591,7 @@ if (__entrySubcommand) {
   // Bun's --compile can't bundle a fully-dynamic import specifier, so switch on
   // a static import per entry — the same modules the Node path spawns as files.
   if (__entrySubcommand === 'core-only') await import('./index-core-only.js');
+  else if (__entrySubcommand === 'wecom') await import('./index-wecom.js');
   else if (__entrySubcommand === 'daemon') await import('./index-daemon.js');
   else if (__entrySubcommand === 'worker') await import('./worker.js');
   else if (__entrySubcommand === 'supervisor') await import('./index-supervisor.js');
@@ -15622,6 +15623,11 @@ switch (command) {
   case 'clone': await cmdClone(process.argv.slice(3)); break;
   case 'start':   await cmdStart(); break;
   case 'serve':   await cmdServe(process.argv.slice(3)); break;
+  case 'wecom': {
+    const { runWecomCommand } = await import('./cli/wecom-command.js');
+    await runWecomCommand(process.argv.slice(3));
+    break;
+  }
   case 'start-bot': await cmdStartBot(process.argv.slice(3)); break;
   case 'stop-bot': await cmdStopBot(process.argv.slice(3)); break;
   case 'stop':    await cmdStop(); break;

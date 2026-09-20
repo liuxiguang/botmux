@@ -23,6 +23,12 @@ installStdioEpipeGuard();
 const globalEnv = join(homedir(), '.botmux', '.env');
 dotenvConfig({ path: existsSync(globalEnv) ? globalEnv : '.env' });
 
+// A transport launcher must not hand its credentials to CLI workers, including
+// credentials reintroduced by the host's dotenv file after spawn-env filtering.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith('WECOM_')) delete process.env[key];
+}
+
 // Same boot-env hygiene as index-daemon: a daemon is never a session, so scrub
 // any session-scoped vars that a parent (e.g. a botmux session that spawned us)
 // might have leaked, or hook-runner / worker isolation would misbehave.

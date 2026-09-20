@@ -28,7 +28,7 @@ import { join, dirname } from 'node:path';
  */
 
 export type BotmuxEntry =
-  | 'core-only' | 'daemon' | 'worker' | 'supervisor' | 'dashboard'
+  | 'core-only' | 'daemon' | 'worker' | 'supervisor' | 'dashboard' | 'wecom'
   | 'plugin-supervisor'
   // CLI-adapter runners. Unlike the entries above these are not fleet processes:
   // an adapter spawns one as the CLI session itself (`resolvedBin` is
@@ -38,6 +38,7 @@ export type BotmuxEntry =
 
 /** Hidden CLI subcommand that runs a given entry inline (see cli.ts dispatch). */
 const ENTRY_SUBCOMMAND: Record<BotmuxEntry, string> = {
+  'wecom': '__wecom',
   'core-only': '__core-only',
   'daemon': '__daemon',
   'worker': '__worker',
@@ -52,6 +53,7 @@ const ENTRY_SUBCOMMAND: Record<BotmuxEntry, string> = {
 
 /** dist/<entry>.js filename for the Node path. */
 const ENTRY_SCRIPT: Record<BotmuxEntry, string> = {
+  'wecom': 'index-wecom.js',
   'core-only': 'index-core-only.js',
   'daemon': 'index-daemon.js',
   'worker': 'worker.js',
