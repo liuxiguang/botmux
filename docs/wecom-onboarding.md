@@ -1,5 +1,7 @@
 # botmux 企业微信适配与本地部署指南
 
+**要在自己的机器上部署，请先执行 [从零部署：人工与 Agent 操作手册](wecom-deployment-runbook.md)。** 它提供可直接交给 Agent 的任务、逐步命令、本人配合事项、后台启停与验收标准。本文保留适配原理和功能边界说明。
+
 本文对应 `codex/wecom-support` 分支，面向希望在自己电脑或服务器上接入企业微信智能机器人的开发者。实现与验收日期：2026-09-20。
 
 - [代码仓库](https://github.com/liuxiguang/botmux)

@@ -1,6 +1,6 @@
 # 企业微信智能机器人
 
-首次部署可先阅读 [适配原理与本地部署指南](wecom-onboarding.md)，包含机器人申请、白名单获取、启动和排查步骤。
+首次部署请按 [人工与 Agent 操作手册](wecom-deployment-runbook.md)逐步执行；[适配原理与本地部署指南](wecom-onboarding.md)介绍架构和功能边界。
 
 企业微信单聊或内部群内 @机器人可以向 botmux 提交文本任务。机器人通过官方 `@wecom/aibot-node-sdk` 长连接收发，专用 core-only 进程复用现有 CLI 执行、异步结果和恢复机制。
 
@@ -49,7 +49,7 @@ bun dist/cli.js wecom serve --config /absolute/path/config.json
 
 已安装的编译版使用 `botmux wecom ...`。出现 `[wecom] authenticated` 和 `[wecom] ready` 才表示连接与执行服务均就绪。源码开发时必须使用本 checkout 的 `dist/cli.js`，避免 PATH 中的旧版本。
 
-企微入口独立管理自己的 core-only 子进程。飞书 fleet 的 `daemon:restart` 不管理这个前台服务；生产部署可由 launchd/systemd 托管上述命令。需要更新时先构建，再停止旧企微进程并启动新版本；不要启动同机器人第二个副本来“滚动更新”。
+企微入口独立管理自己的 core-only 子进程。飞书 fleet 的 `daemon:restart` 不管理这个前台服务；生产部署可由 launchd/systemd 托管上述命令。更新源码版时先等待任务结束并停止旧企微进程，再构建并启动新版本，避免构建清理正在使用的 dist；不要启动同机器人第二个副本来“滚动更新”。
 
 ## 消息与命令
 
