@@ -28,6 +28,16 @@ function setup() {
 }
 
 describe('WeCom execution bridge', () => {
+  it('accepts normalized employee events and respects the text transport byte limit', async () => {
+    const f = setup();
+    const transport = { ...f.transport, maxMessageBytes: 2048 };
+    const employeeStore = new WecomStore(join(dirs[0], 'employee.sqlite')); stores.push(employeeStore);
+    const bridge = new WecomBridge({ config: f.config, botId: 'employee:owner', coreBotId: 'local_employee', store: employeeStore, core: f.core, transport });
+    await bridge.acceptMessage({ botId: 'employee:owner', msgId: 'm1', reqId: 'm1', chatType: 'single', chatId: 'alice', senderId: 'alice', kind: 'text', text: 'task' });
+    await bridge.tick(); f.setResult({ ok: true, state: 'completed', output: { content: '中'.repeat(5000) } }); await bridge.tick();
+    const parts = employeeStore.outboxFor(1).filter(o => o.kind === 'send');
+    expect(parts.length).toBeGreaterThan(1); expect(parts.every(o => Buffer.byteLength(o.content) <= 2048)).toBe(true);
+  });
   it('serializes two senders in a shared group and polls exact turns', async () => {
     const f = setup();
     await f.bridge.accept(frame('one')); await f.bridge.accept(frame('two', 'bob'));

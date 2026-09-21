@@ -5,6 +5,7 @@ import { CoreRequestError, type CoreClient } from './core-client.js';
 import type { TriggerRequest } from '../../services/trigger-types.js';
 
 export interface WecomTransport {
+  maxMessageBytes?: number;
   reply(message: WecomMessage, content: string): Promise<void>;
   send(message: WecomMessage, content: string): Promise<void>;
 }
@@ -30,10 +31,15 @@ export class WecomBridge {
   private log(event: string, task?: number): void { this.options.log?.(event, task); }
 
   async accept(frame: unknown): Promise<void> {
+    const message = normalizeMessage(frame, this.options.botId);
+    if (!message) { this.log('inbound_rejected'); return; }
+    await this.acceptMessage(message);
+  }
+
+  async acceptMessage(message: WecomMessage): Promise<void> {
     if (this.stopping) return;
     const { botId, config, store } = this.options;
-    const message = normalizeMessage(frame, botId);
-    if (!message || !isAllowed(message, config)) { this.log('inbound_rejected'); return; }
+    if (message.botId !== botId || !isAllowed(message, config)) { this.log('inbound_rejected'); return; }
     let text = message.text.trim();
     if (message.chatType === 'group' && config.botName) {
       const mention = `@${config.botName}`;
@@ -60,7 +66,10 @@ export class WecomBridge {
         if (store.getConversation(row.conversationKey)?.blocked) notice += '\n会话已暂停，管理员可用 /new 开启新会话。';
       } else notice = '暂不支持这个命令。输入 /help 查看可用命令。';
     }
-    if (notice) { store.finish(row.id, 'command', notice, []); store.addReply(row.id, notice); }
+    if (notice) {
+      if (Buffer.byteLength(notice) > (this.options.transport.maxMessageBytes ?? 16000)) store.finish(row.id, 'command', notice, this.resultChunks(row, notice));
+      else { store.finish(row.id, 'command', notice, []); store.addReply(row.id, notice); }
+    }
     else store.addReply(row.id, `已接收任务 #${row.id}，将按顺序执行。`);
   }
 
@@ -132,7 +141,7 @@ export class WecomBridge {
     }
   }
   private resultChunks(row: WorkItem, text: string): string[] {
-    const parts = splitUtf8(text, 14000);
+    const parts = splitUtf8(text, Math.min(14000, (this.options.transport.maxMessageBytes ?? 16000) - 256));
     const sender = row.message.chatType === 'group' ? ` · 发起者 #${stableKey(row.message.senderId).slice(0, 6)}` : '';
     return parts.map((part, i) => `任务 #${row.id}${sender}${parts.length > 1 ? `（${i + 1}/${parts.length}）` : ''}\n\n${part}`);
   }

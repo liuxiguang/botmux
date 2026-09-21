@@ -20,6 +20,17 @@ describe('WeCom configuration boundary', () => {
       expect(() => parseWecomConfig({ ...raw, ...patch }, '/config')).toThrow();
     }
   });
+  it('accepts employee mode without bot secrets and rejects unapproved conversations', () => {
+    const employee = { userId: 'user-a', chats: [{ chatId: 'group-a', chatType: 'group' }] };
+    const c = parseWecomConfig({ ...raw, mode: 'employee', employee }, '/config');
+    expect(c.mode).toBe('employee');
+    expect(c.employee?.chats[0].chatId).toBe('group-a');
+    expect(() => parseWecomConfig({ ...raw, mode: 'employee' }, '/config')).toThrow();
+    expect(() => parseWecomConfig({ ...raw, mode: 'employee', employee: { ...employee, chats: [{ chatId: 'unapproved', chatType: 'group' }] } }, '/config')).toThrow();
+    const dir = mkdtempSync(join(tmpdir(), 'wecom-config-')); dirs.push(dir);
+    writeFileSync(join(dir, 'config.json'), JSON.stringify({ ...raw, mode: 'employee', employee }));
+    expect(loadWecomConfig(join(dir, 'config.json'), {}).credentials).toBeNull();
+  });
   it('loads a named env file without mutating process.env and gives explicit env precedence', () => {
     const dir = mkdtempSync(join(tmpdir(), 'wecom-config-')); dirs.push(dir);
     writeFileSync(join(dir, 'config.json'), JSON.stringify({ ...raw, envFile: './private.env' }));

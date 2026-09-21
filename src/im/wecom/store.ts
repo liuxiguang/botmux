@@ -42,6 +42,12 @@ export class WecomStore {
       CREATE INDEX IF NOT EXISTS send_window ON send_attempts(conversationKey,at);`);
   }
   close(): void { if (!this.closed) { this.closed = true; this.db.close(); } }
+  getCheckpoint(key: string): string | undefined {
+    return (this.db.prepare('SELECT value FROM meta WHERE key=?').get(`checkpoint:${key}`) as { value: string } | undefined)?.value;
+  }
+  setCheckpoint(key: string, value: string): void {
+    this.db.prepare('INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(`checkpoint:${key}`, value);
+  }
   private transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
     try { const result = fn(); this.db.exec('COMMIT'); return result; }

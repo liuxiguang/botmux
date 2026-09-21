@@ -4,7 +4,22 @@ import { parse as parseEnv } from 'dotenv';
 import { z } from 'zod';
 
 const identity = z.string().trim().min(1).max(256);
+const employeeSchema = z.object({
+  userId: identity,
+  cliPath: z.string().min(1).default('wecom-cli'),
+  cliConfigDir: z.string().min(1).optional(),
+  chats: z.array(z.object({ chatId: identity, chatType: z.enum(['single', 'group']),
+    name: z.string().max(120).optional(), prefix: z.string().min(1).max(120).optional() }).strict()).min(1).max(100),
+  ownMessagePrefix: z.string().min(1).max(120).default('/codex '),
+  pollIntervalMs: z.number().int().min(5000).max(3600000).default(30000),
+  requestIntervalMs: z.number().int().min(250).max(60000).default(1000),
+  overlapMs: z.number().int().min(10000).max(3600000).default(120000),
+  callback: z.object({ host: z.enum(['127.0.0.1', '0.0.0.0']).default('127.0.0.1'),
+    port: z.number().int().min(1024).max(65535), path: z.string().regex(/^\/[a-zA-Z0-9/_-]+$/).default('/wecom/employee/callback') }).strict().optional(),
+}).strict();
 const schema = z.object({
+  mode: z.enum(['bot', 'employee']).default('bot'),
+  employee: employeeSchema.optional(),
   workingDir: z.string().trim().min(1),
   stateDir: z.string().trim().min(1),
   envFile: z.string().trim().min(1).optional(),
@@ -31,8 +46,10 @@ const schema = z.object({
 }).strict();
 
 export type WecomConfig = z.infer<typeof schema>;
+export type EmployeeConfig = z.infer<typeof employeeSchema>;
 export interface WecomCredentials { botId: string; secret: string }
-export interface LoadedWecomConfig { config: WecomConfig; credentials: WecomCredentials }
+export interface CallbackCredentials { token: string; aesKey: string; corpId: string }
+export interface LoadedWecomConfig { config: WecomConfig; credentials: WecomCredentials | null; callbackCredentials?: CallbackCredentials }
 
 export function parseWecomConfig(raw: unknown, baseDir: string): WecomConfig {
   const result = schema.safeParse(raw);
@@ -40,6 +57,15 @@ export function parseWecomConfig(raw: unknown, baseDir: string): WecomConfig {
   if (!result.success) throw new Error(`企业微信配置字段无效：${result.error.issues.map(i => i.path.join('.') || 'config').join(', ')}`);
   const c = result.data;
   if (c.adminUsers.some(u => !c.allowedUsers.includes(u))) throw new Error('adminUsers 必须属于 allowedUsers');
+  if ((c.mode === 'employee') !== Boolean(c.employee)) throw new Error('employee 配置只适用于员工模式且不能为空');
+  if (c.employee) {
+    const keys = c.employee.chats.map(chat => `${chat.chatType}:${chat.chatId}`);
+    if (new Set(keys).size !== keys.length) throw new Error('员工会话不能重复');
+    if (c.employee.chats.some(chat => chat.chatType === 'group' ? !c.allowedChats.includes(chat.chatId)
+      : chat.chatId === c.employee!.userId || !c.allowedUsers.includes(chat.chatId))) throw new Error('员工会话必须属于白名单且不能私聊自己');
+    if (c.employee.callback?.port === c.corePort) throw new Error('callback 端口不能与 corePort 相同');
+    if (c.employee.cliConfigDir) c.employee.cliConfigDir = resolve(baseDir, c.employee.cliConfigDir);
+  }
   return { ...c, workingDir: resolve(baseDir, c.workingDir), stateDir: resolve(baseDir, c.stateDir),
     ...(c.envFile ? { envFile: resolve(baseDir, c.envFile) } : {}) };
 }
@@ -53,6 +79,12 @@ export function loadWecomConfig(path: string, env: NodeJS.ProcessEnv = process.e
     try { fileEnv = parseEnv(readFileSync(config.envFile)); } catch { throw new Error('无法读取企业微信 envFile'); }
   }
   const values = { ...fileEnv, ...env };
+  if (config.mode === 'employee') {
+    if (!config.employee?.callback) return { config, credentials: null };
+    const token = values.WECOM_CALLBACK_TOKEN?.trim(), aesKey = values.WECOM_CALLBACK_AES_KEY?.trim(), corpId = values.WECOM_CALLBACK_CORP_ID?.trim();
+    if (!token || !aesKey || !corpId || !/^[A-Za-z0-9+/]{43}$/.test(aesKey)) throw new Error('员工回调需要 WECOM_CALLBACK_TOKEN、WECOM_CALLBACK_AES_KEY（43 位）、WECOM_CALLBACK_CORP_ID');
+    return { config, credentials: null, callbackCredentials: { token, aesKey, corpId } };
+  }
   const botId = values.WECOM_BOT_ID?.trim();
   const secret = values.WECOM_BOT_SECRET?.trim();
   const missing = [!botId && 'WECOM_BOT_ID', !secret && 'WECOM_BOT_SECRET'].filter(Boolean);

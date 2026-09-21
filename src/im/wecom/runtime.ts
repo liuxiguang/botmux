@@ -9,9 +9,12 @@ import { withFileLock } from '../../utils/file-lock.js';
 import { loadWecomConfig, type WecomConfig } from './config.js';
 import { stableKey } from './message.js';
 import { WecomStore } from './store.js';
-import { WecomBridge } from './bridge.js';
+import { WecomBridge, type WecomTransport } from './bridge.js';
 import { createCoreClient } from './core-client.js';
 import { SdkWecomTransport } from './transport.js';
+import { EmployeeTransport } from './employee-transport.js';
+
+interface ManagedTransport extends WecomTransport { start(): Promise<void>; stopReceiving?(): Promise<void>; stop(): void | Promise<void>; closed: Promise<string> }
 
 export function buildCoreEnv(config: WecomConfig, botId: string, inherited: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env = { ...inherited };
@@ -64,23 +67,24 @@ export async function stopChild(child: ChildProcess, graceMs = 15000): Promise<v
 }
 
 export async function runWecom(configPath: string): Promise<void> {
-  const { config, credentials } = loadWecomConfig(configPath);
+  const { config, credentials, callbackCredentials } = loadWecomConfig(configPath);
+  const accountId = config.mode === 'employee' ? `employee:${config.employee!.userId}` : credentials!.botId;
   if (!statSync(config.workingDir).isDirectory()) throw new Error('workingDir 必须是现有目录');
   const lockDir = join(homedir(), '.botmux', 'wecom', 'locks');
   mkdirSync(lockDir, { recursive: true, mode: 0o700 });
   mkdirSync(config.stateDir, { recursive: true, mode: 0o700 });
-  const identity = stableKey(credentials.botId).slice(0, 24);
+  const identity = stableKey(accountId).slice(0, 24);
   // Global per-OS-user lock, independent of config/state path; held for the whole connection lifetime.
   await withFileLock(join(lockDir, identity), async () => {
     await assertPortAvailable(config.corePort);
     const coreBotId = `local_wecom_${identity}`;
     const log = (event: string, task?: number) => console.log(`[wecom] ${event}${task === undefined ? '' : ` task=${task}`}`);
     const store = new WecomStore(join(config.stateDir, 'wecom.sqlite'));
-    store.bindBot(credentials.botId);
+    store.bindBot(accountId);
     const logFd = openSync(join(config.stateDir, 'core.log'), 'a', 0o600);
     const spec = resolveEntrySpawn('core-only', fileURLToPath(new URL('../../', import.meta.url)));
     let child: ChildProcess | undefined;
-    let transport: SdkWecomTransport | undefined;
+    let transport: ManagedTransport | undefined;
     let bridge: WecomBridge | undefined;
     let timer: ReturnType<typeof setInterval> | undefined;
     let resolveStop!: (reason: string) => void;
@@ -94,10 +98,12 @@ export async function runWecom(configPath: string): Promise<void> {
       child.once('exit', () => resolveStop('core_exited')); child.once('error', () => resolveStop('core_start_failed'));
       const first = await Promise.race([waitCoreReady(child, config.corePort, coreBotId).then(() => 'ready'), stopped]);
       if (first !== 'ready') { if (first !== 'signal') throw new Error(first); return; }
-      transport = new SdkWecomTransport(credentials, {
+      transport = config.mode === 'employee'
+        ? new EmployeeTransport(config, store, message => bridge!.acceptMessage(message), log, callbackCredentials)
+        : new SdkWecomTransport(credentials!, {
         log, onMessage: frame => { void bridge!.accept(frame).catch(() => resolveStop('inbound_storage_failed')); },
       });
-      bridge = new WecomBridge({ config, botId: credentials.botId, coreBotId, store,
+      bridge = new WecomBridge({ config, botId: accountId, coreBotId, store,
         core: createCoreClient(config.corePort), transport, log });
       const started = await Promise.race([transport.start().then(() => 'ready'), stopped]);
       if (started !== 'ready') { if (started !== 'signal') throw new Error(started); return; }
@@ -108,7 +114,8 @@ export async function runWecom(configPath: string): Promise<void> {
       if (reason !== 'signal' && reason !== 'stopped') throw new Error(`企微服务停止：${reason}`);
     } finally {
       if (timer) clearInterval(timer);
-      await bridge?.stop(); transport?.stop();
+      await transport?.stopReceiving?.();
+      await bridge?.stop(); await transport?.stop();
       if (child) await stopChild(child);
       process.off('SIGINT', signal); process.off('SIGTERM', signal);
       store.close(); closeSync(logFd); log('stopped');
